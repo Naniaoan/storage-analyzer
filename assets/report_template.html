@@ -1,0 +1,520 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>存储分析报告</title>
+<style>
+  :root{
+    --bg:#f6f7f9; --card:#ffffff; --ink:#1d2129; --sub:#86909c;
+    --line:#e5e6eb; --green:#00b42a; --yellow:#ff7d00; --red:#f53f3f;
+    --green-bg:#e8ffea; --yellow-bg:#fff7e8; --red-bg:#ffece8;
+    --accent:#165dff; --accent-bg:#e8f3ff;
+    --radius:14px; --shadow:0 1px 3px rgba(0,0,0,.04),0 8px 24px rgba(0,0,0,.04);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:-apple-system,"SF Pro SC","PingFang SC",system-ui,sans-serif;
+    background:var(--bg);color:var(--ink);line-height:1.6;padding:32px 20px 80px;
+    -webkit-font-smoothing:antialiased}
+  .wrap{max-width:1040px;margin:0 auto}
+  header{margin-bottom:28px}
+  h1{font-size:26px;font-weight:700;letter-spacing:-.5px}
+  .meta{color:var(--sub);font-size:13px;margin-top:6px}
+
+  /* disk overview */
+  .overview{background:var(--card);border-radius:var(--radius);box-shadow:var(--shadow);
+    padding:24px;margin-bottom:24px}
+  .bar{height:16px;border-radius:8px;background:var(--line);overflow:hidden;display:flex;margin:16px 0 12px}
+  .bar i{display:block;height:100%}
+  .bar .used{background:linear-gradient(90deg,#165dff,#4080ff)}
+  .bar i.seg-green{background:var(--green)}
+  .bar i.seg-yellow{background:var(--yellow)}
+  .bar i.seg-red{background:var(--red)}
+  .bar i.seg-blue{background:var(--accent)}
+  .bar i+i{border-left:1.5px solid #fff}
+  .lead{font-size:14px;line-height:1.7;margin-bottom:12px}
+  .stats{display:flex;flex-wrap:wrap;gap:24px}
+  .stat .k{font-size:12px;color:var(--sub)}
+  .stat .v{font-size:18px;font-weight:600;font-variant-numeric:tabular-nums}
+  .sysgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));
+    gap:10px 24px;margin-top:20px;padding-top:18px;border-top:1px solid var(--line)}
+  .sysgrid div{font-size:13px}
+  .sysgrid span{color:var(--sub)}
+  .pills{margin:14px 0 0}
+  .bar-label{font-size:12px;color:var(--sub);margin-bottom:4px}
+  .other-disks{margin-top:16px;padding-top:14px;border-top:1px solid var(--line)}
+  .other-disks .label{font-size:12px;color:var(--sub);font-weight:600;margin-bottom:8px}
+  .odisk{display:flex;align-items:center;gap:12px;margin:6px 0;font-size:13px}
+  .odisk-name{width:46px;font-weight:600;font-variant-numeric:tabular-nums}
+  .obar{flex:1;height:10px;border-radius:6px;background:var(--line);overflow:hidden}
+  .obar i{display:block;height:100%;background:linear-gradient(90deg,#165dff,#4080ff)}
+  .odisk-num{color:var(--sub);font-variant-numeric:tabular-nums;white-space:nowrap}
+
+  /* sections */
+  .sec{margin-bottom:28px}
+  .sec h2{font-size:18px;font-weight:700;margin-bottom:14px;display:flex;align-items:center;gap:8px}
+  .sec h2 .count{font-size:13px;color:var(--sub);font-weight:500}
+  .sec-actions{margin-left:auto;display:flex;align-items:center;gap:8px}
+  .sec-actions .del-btn{padding:5px 12px;font-size:12px}
+  .sec-status{font-size:12px}
+
+  /* top5 table */
+  table{width:100%;border-collapse:collapse;background:var(--card);
+    border-radius:var(--radius);overflow:hidden;box-shadow:var(--shadow)}
+  th,td{text-align:left;padding:12px 14px;font-size:13px;border-bottom:1px solid var(--line)}
+  th{background:#fafbfc;color:var(--sub);font-weight:600;font-size:12px;white-space:nowrap}
+  td.type{white-space:nowrap}
+  .table-scroll{overflow-x:auto;border-radius:var(--radius);box-shadow:var(--shadow)}
+  .table-scroll table{min-width:720px;box-shadow:none}
+  tr:last-child td{border-bottom:none}
+  td.size{font-weight:700;font-variant-numeric:tabular-nums;white-space:nowrap}
+  td.path{font-family:"SF Mono",ui-monospace,monospace;font-size:12px;color:var(--sub);word-break:break-all}
+  .dot{display:inline-block;width:9px;height:9px;border-radius:50%}
+  .dot.green{background:var(--green)} .dot.yellow{background:var(--yellow)} .dot.red{background:var(--red)} .dot.blue{background:var(--accent)}
+
+  /* item cards */
+  .item{background:var(--card);border-radius:var(--radius);box-shadow:var(--shadow);
+    margin-bottom:12px;border-left:4px solid var(--line);overflow:hidden}
+  .item.green{border-left-color:var(--green)}
+  .item.yellow{border-left-color:var(--yellow)}
+  .item.red{border-left-color:var(--red)}
+  .item-head{display:flex;align-items:center;gap:12px;padding:16px 18px;cursor:pointer;user-select:none}
+  .item-head:hover{background:#fafbfc}
+  .item-name{font-weight:600;font-size:15px;flex:1}
+  .item-badge{font-size:12px;font-weight:600;color:var(--green);background:var(--green-bg);
+    padding:2px 10px;border-radius:20px;white-space:nowrap}
+  .item-badge:empty{display:none}
+  .item.cleaned .item-name{text-decoration:line-through;color:var(--sub);font-weight:500}
+  .item.cleaned .item-size{color:var(--sub)}
+  .item.cleaned{opacity:.85}
+  .item-size{font-weight:700;font-variant-numeric:tabular-nums;color:var(--accent)}
+  .chev{color:var(--sub);transition:transform .2s;font-size:12px}
+  .item.open .chev{transform:rotate(90deg)}
+  .item-body{display:none;padding:0 18px 18px;font-size:14px}
+  .item.open .item-body{display:block}
+  .item-path{font-family:"SF Mono",ui-monospace,monospace;font-size:12px;color:var(--sub);
+    word-break:break-all;margin-bottom:12px;padding:8px 10px;background:#fafbfc;border-radius:8px}
+  .field{margin:10px 0}
+  .field .label{font-size:12px;color:var(--sub);font-weight:600;margin-bottom:3px}
+  .tag{display:inline-block;background:var(--accent-bg);color:var(--accent);
+    font-size:12px;padding:2px 8px;border-radius:6px;margin:2px 4px 2px 0}
+  .risk{background:var(--red-bg);color:var(--red);padding:8px 12px;border-radius:8px;
+    font-size:13px;margin-top:10px}
+
+  /* command block */
+  .cmd{position:relative;background:#1d2129;color:#e5e6eb;border-radius:10px;
+    padding:14px 14px;margin:8px 0;font-family:"SF Mono",ui-monospace,monospace;
+    font-size:12.5px;line-height:1.7;overflow-x:auto;white-space:pre}
+  .cmd .copy{position:absolute;top:8px;right:8px;background:#2d3138;color:#c9cdd4;
+    border:none;border-radius:6px;padding:4px 10px;font-size:11px;cursor:pointer;
+    font-family:inherit}
+  .cmd .copy:hover{background:#3d424a;color:#fff}
+  .cmd .copy.done{background:var(--green);color:#fff}
+  .cmd-label{font-size:11px;color:var(--sub);margin:10px 0 2px}
+
+  /* one-click delete actions */
+  .del-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:4px}
+  .del-btn{border:none;border-radius:8px;padding:7px 16px;font-size:13px;font-weight:600;cursor:pointer}
+  .del-btn.trash{background:var(--accent-bg);color:var(--accent)}
+  .del-btn.trash:hover{background:#d4e4ff}
+  .del-btn.danger{background:var(--red-bg);color:var(--red)}
+  .del-btn.danger:hover{background:#ffd4cc}
+  .del-btn.open{background:#f2f3f5;color:var(--ink)}
+  .del-btn.open:hover{background:#e5e6eb}
+  .del-btn:disabled{opacity:.45;cursor:default}
+  .del-status{font-size:13px}
+  .del-status.ok{color:var(--green);font-weight:600}
+  .del-status.err{color:var(--red)}
+  .del-note{font-size:12px;color:var(--sub);line-height:1.6;margin-top:8px}
+  .del-note b{color:var(--ink)}
+
+  /* summary */
+  .summary{background:var(--card);border-radius:var(--radius);box-shadow:var(--shadow);padding:24px}
+  .summary h3{font-size:15px;margin:18px 0 8px} .summary h3:first-child{margin-top:0}
+  .summary ul{padding-left:20px} .summary li{margin:4px 0;font-size:14px}
+  .pill{display:inline-flex;align-items:center;gap:6px;background:#fafbfc;border:1px solid var(--line);
+    border-radius:20px;padding:6px 14px;font-size:13px;margin:4px 8px 4px 0;font-weight:600}
+  .pill b{font-variant-numeric:tabular-nums}
+
+  .note{font-size:12px;color:var(--sub);margin-top:8px}
+  .denied{background:var(--yellow-bg);border:1px solid #ffd591;border-radius:10px;
+    padding:12px 14px;font-size:13px;margin-top:12px}
+  footer{text-align:center;color:var(--sub);font-size:12px;margin-top:40px}
+
+  .decision-preview{padding:0 18px 16px;font-size:14px}.decision-line{display:flex;gap:12px;align-items:baseline;flex-wrap:wrap}.decision-label{font-weight:700;color:#165dff}.decision-saving{color:#4e5969;font-size:13px}.decision-preview p{margin-top:6px}.decision-reasons{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:12px}.decision-reasons b{font-size:12px;color:#4e5969}.decision-reasons p{font-size:13px}.decision-choice{margin-top:12px;padding:10px 12px;background:#f6f7f9;border-radius:8px;font-size:13px}.audit{margin-top:16px;border-top:1px solid var(--line);padding-top:12px}.audit summary{cursor:pointer;color:#165dff;font-size:13px;margin-bottom:10px}.item-head{width:100%;border:0;background:white;text-align:left;font:inherit;color:inherit}.item-size{white-space:nowrap}.quiet-group>summary{cursor:pointer;font-size:17px;font-weight:600;margin:20px 0 14px}.focus-intro{padding:18px;background:white;border-radius:12px;margin:20px 0}.focus-intro p{font-size:14px;margin-top:6px}@media(max-width:600px){.decision-reasons{grid-template-columns:1fr;gap:8px}.item-head{gap:8px;padding:14px}.item-name{min-width:0}.item-size{font-size:12px}.decision-preview{padding:0 14px 14px}.sec h2{flex-wrap:wrap}}
+
+  .object-card{background:white;border:1px solid var(--line);border-radius:12px;padding:18px;margin:12px 0}.object-title{display:flex;justify-content:space-between;gap:12px;align-items:baseline}.object-title h3{font-size:16px}.object-size{font-size:19px;font-weight:700;white-space:nowrap}.object-context{font-size:12px;color:#6b7280;margin:4px 0 10px}.object-verdict{font-weight:600;font-size:14px;color:#165dff}.object-impact{font-size:13px;margin:7px 0}.object-path{font:11px/1.5 ui-monospace,monospace;color:#6b7280;overflow-wrap:anywhere;background:#f6f7f9;padding:8px 10px;border-radius:6px;margin-top:10px}.object-next{font-size:13px;margin-top:9px}.object-keep .object-verdict{color:#667085}.object-card .audit{margin-top:10px}.object-intro{font-size:13px;color:#667085;margin-bottom:12px}@media(max-width:600px){.object-title{align-items:flex-start}.object-size{font-size:16px}.object-card{padding:14px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>存储分析报告</h1>
+    <div class="meta" id="meta"></div>
+  </header>
+  <div id="app"></div>
+  <footer>storage-analyzer · 只读分析 · 删除命令请自行在终端确认后执行</footer>
+</div>
+
+<script>
+const DATA = __REPORT_DATA__;
+const DELETE = __DELETE_CONFIG__; // null=静态只读报告；{token,endpoint}=server.py 提供一键删除
+const FM = (DATA.system && /win/i.test(DATA.system.os||'')) ? '资源管理器' : '访达'; // 文件管理器名，按系统
+
+const esc = s => String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+// "约" 已表示估算，去掉冗余的"（估算…）"括号让大小显示更干净专业
+const cleanSize = s => String(s==null?'':s).replace(/[（(]\s*估算[^）)]*[）)]/g, '').trim();
+
+function copyBtn(text){
+  const id='c'+Math.random().toString(36).slice(2);
+  // store raw text on element via data attribute (base64 to survive quotes)
+  return `<button class="copy" data-cmd="${btoa(unescape(encodeURIComponent(text)))}">复制</button>`;
+}
+
+function cmdBlock(c){
+  const label = c.label ? `<div class="cmd-label">${esc(c.label)}</div>` : '';
+  return `${label}<div class="cmd">${copyBtn(c.cmd)}${esc(c.cmd)}</div>`;
+}
+
+function renderSystem(s, sm){
+  document.getElementById('meta').textContent =
+    `生成于 ${DATA.generated_at}　·　扫描耗时 ${DATA.scan_seconds||'?'}s`;
+  // 已用部分分段：绿(可自动清)+橙(需手动)+红(已识别的不建议动项)+蓝(其他/系统等未归类的已用)，余下灰底为可用
+  const total = parseGB(s.disk_total) || 1;
+  const used = parseGB(s.disk_used);
+  const ts = sm && sm.tier_stats;
+  const g = ts ? parseGB(ts.green) : 0;
+  const y = ts ? parseGB(ts.yellow) : 0;
+  const r = ts ? parseGB(ts.red) : 0;
+  const other = Math.max(0, used - g - y - r); // 既非红黄绿、也未单独列出的已用空间（系统+零碎文件）
+  let bar;
+  if(g > 0 || y > 0 || r > 0){
+    const seg=(v,cls,label)=> v>0?`<i class="${cls}" style="width:${(v/total*100).toFixed(2)}%" title="${label}：约 ${v.toFixed(1)} GB"></i>`:'';
+    bar = seg(g,'seg-green','可自动清')+seg(y,'seg-yellow','待判断项目占用')+seg(r,'seg-red','保留项目占用')+seg(other,'seg-blue','系统及其他');
+  } else {
+    bar = `<i class="used" style="width:${(used/total*100).toFixed(2)}%"></i>`;
+  }
+  const fmtGB = v => v>0?`约 ${v.toFixed(1)} GB`:'-';
+  const otherPill = other>0?`<span class="pill"><span class="dot blue"></span>系统及其他 <b>${fmtGB(other)}</b></span>`:'';
+  let pills='';
+  if(sm && sm.tier_stats){
+    pills=`<div class="pills">
+      <span class="pill"><span class="dot green"></span>缓存候选 <b>${fmtGB(g)}</b></span>
+      <span class="pill"><span class="dot yellow"></span>待判断项目占用 <b>${fmtGB(y)}</b></span>
+      <span class="pill"><span class="dot red"></span>保留项目占用 <b>${fmtGB(r)}</b></span>
+      ${otherPill}
+    </div>`;
+  }
+  // 多盘符（Windows）：主盘用上面的分段条，其余盘紧凑列出
+  const allDisks = s.disks || [];
+  const others = allDisks.filter(d => d.name !== s.disk_name);
+  const barLabel = allDisks.length > 1
+    ? `<div class="bar-label">系统盘 ${esc(s.disk_name||'')} · 已用部分按清理分级着色</div>` : '';
+  const otherDisksBlock = others.length ? `<div class="other-disks">
+      <div class="label">其他磁盘</div>
+      ${others.map(d=>{
+        const u=parseGB(d.used), t=parseGB(d.total)||1;
+        const pct=Math.min(100, u/t*100).toFixed(1);
+        return `<div class="odisk"><span class="odisk-name">${esc(d.name)}</span>
+          <div class="obar"><i style="width:${pct}%"></i></div>
+          <span class="odisk-num">${esc(d.used)} / ${esc(d.total)}</span></div>`;
+      }).join('')}</div>` : '';
+  return `<div class="overview">
+    <div class="stats">
+      <div class="stat"><div class="k">总容量</div><div class="v">${esc(s.disk_total)}</div></div>
+      <div class="stat"><div class="k">已用</div><div class="v">${esc(s.disk_used)}</div></div>
+      <div class="stat"><div class="k">可用</div><div class="v">${esc(s.disk_free)}</div></div>
+      ${s.purgeable?`<div class="stat"><div class="k">可清除(系统)</div><div class="v">${esc(s.purgeable)}</div></div>`:''}
+    </div>
+    ${barLabel}
+    <div class="bar">${bar}</div>
+    ${pills}
+    ${otherDisksBlock}
+    <div class="sysgrid">
+      <div><span>系统　</span>${esc(s.os)} (${esc(s.build)})</div>
+      <div><span>架构　</span>${esc(s.arch)}</div>
+      <div><span>文件系统　</span>${esc(s.filesystem)}</div>
+      <div><span>用户　</span>${esc(s.user)}</div>
+      <div><span>主目录　</span>${esc(s.home)}</div>
+    </div>
+  </div>`;
+}
+// 从 "约 27.8 GB（…）" / "300.3 GB" 这类字符串里取数值，统一换算成 GB
+function parseGB(str){
+  if(!str) return 0;
+  const m=String(str).match(/([\d.]+)\s*(TB|GB|MB)?/i);
+  if(!m) return 0;
+  let v=parseFloat(m[1]); const u=(m[2]||'GB').toUpperCase();
+  if(u==='TB') v*=1024; else if(u==='MB') v/=1024;
+  return v;
+}
+
+function renderTop5(rows){
+  if(!rows||!rows.length) return '';
+  const body = rows.map(r=>`<tr>
+    <td>${esc(r.rank)}</td>
+    <td><span class="dot ${esc(r.tier)}"></span></td>
+    <td class="size">${esc(cleanSize(r.size))}</td>
+    <td class="type">${esc(r.type)}</td>
+    <td><b>${esc(r.name)}</b></td>
+    <td class="path">${esc(r.path)}</td>
+    <td>${esc(r.note)}</td>
+  </tr>`).join('');
+  return `<div class="sec"><h2>占用排行 Top 5</h2>
+    <div class="table-scroll"><table><thead><tr><th>#</th><th>级</th><th>大小</th><th>类型</th><th>项目</th><th>路径</th><th>说明</th></tr></thead>
+    <tbody>${body}</tbody></table></div></div>`;
+}
+
+function renderValidation(v){
+  if(!v || v.status !== 'invalid') return '';
+  return `<div class="sec"><h2>快照校验失败</h2><div class="summary"><p>${esc((v.errors||[]).join('；'))}</p><p>${esc(v.note)}</p></div></div>`;
+}
+
+function renderEvidence(it){
+  const fields = [['软件归属与置信度',it.ownership_evidence],['安装状态',it.install_state],['最近变化与长期未更新项',it.last_activity],['当前身份或功能依赖',it.active_dependency],['共用组件核验',it.shared_dependency],['本轮处置依据',it.decision_reason],['清理限制',it.cleanup_guard_note],['内容与依据',it.evidence],['运行与占用状态',it.process_status],['清理影响',it.impact],['恢复办法',it.recovery]];
+  const detail = fields.filter(x=>x[1]).map(x=>`<div class="field"><div class="label">${esc(x[0])}</div>${esc(x[1])}</div>`).join('');
+  const rows=(it.findings||[]).map(r=>`<tr><td>${esc(r.name)}</td><td>${esc(r.size)}</td><td class="path">${esc(r.path)}</td><td>${esc(r.content)}</td><td>${esc(r.decision)}</td></tr>`).join('');
+  return `<details class="audit"><summary>查看完整核验与文件明细</summary>`+detail+(rows?`<div class="table-scroll"><table><thead><tr><th>具体对象</th><th>占用</th><th>路径</th><th>内容</th><th>建议</th></tr></thead><tbody>${rows}</tbody></table></div>`:'')+'</details>';
+}
+
+function renderGreen(items){
+  if(!items||!items.length) return '';
+  const cards = items.map(it=>{
+    const procs=(it.kill_processes&&it.kill_processes.length)
+      ? `<div class="field"><div class="label">清理前需关闭</div>${it.kill_processes.map(p=>`<span class="tag">${esc(p)}</span>`).join('')}</div>`
+      : `<div class="field"><div class="label">清理前需关闭</div><span class="note">未指定；操作前核对本项运行与占用状态</span></div>`;
+    const cmds=(it.commands||[]).map(cmdBlock).join('');
+    return card('green', it.name, it.size_estimate, it.path,
+      renderEvidence(it) + procs + `<div class="field"><div class="label">清理命令（自行确认后执行）</div>${cmds}</div>` + delBlock(it), it);
+  }).join('');
+  return section('🟢 可自动清理（纯缓存/临时文件，可再生）', items.length, cards, greenBatchActions(items));
+}
+
+// 分组级批量按钮：绿灯每项应经分析确认可再生；操作前仍需满足退出应用等前提，给「全部移废纸篓/全部删除」一次清完。
+// 橙灯/红灯需逐项判断，不给批量。仅 server.py 模式且至少一项有 trash_paths 时渲染。
+function greenBatchActions(items){
+  if(!DELETE) return '';
+  if(!items.some(it => it.trash_paths && it.trash_paths.length)) return '';
+  return `<span class="sec-actions">
+    <button class="del-btn trash" onclick="doBatch(this,'trash')">全部移废纸篓</button>
+    <button class="del-btn danger" onclick="doBatch(this,'rm')">全部删除</button>
+    <span class="del-status sec-status"></span>
+  </span>`;
+}
+
+// 批量处理：收集本组所有未清理项的 trash_paths，确认一次，一次性提交。
+function doBatch(btn, mode){
+  const secActions = btn.closest('.sec-actions');
+  const sec = btn.closest('.sec');
+  const status = secActions.querySelector('.del-status');
+  const wraps = [...sec.querySelectorAll('.item.green .del-actions')]
+    .filter(w => !w.closest('.item').classList.contains('cleaned'));
+  if(!wraps.length){ status.textContent='没有可清理的项了'; status.className='del-status sec-status'; return; }
+  const allPaths=[]; let gb=0;
+  wraps.forEach(w=>{
+    JSON.parse(decodeURIComponent(escape(atob(w.dataset.paths)))).forEach(p=>allPaths.push(p));
+    const sz=w.closest('.item').querySelector('.item-size'); if(sz) gb+=parseGB(sz.textContent);
+  });
+  const verb = mode==='rm' ? '直接删除（不可恢复）' : '移到废纸篓（可逆，清空后释放）';
+  const sizeStr = gb>0 ? `，约 ${gb.toFixed(1)} GB` : '';
+  if(!confirm(`先退出各项所属应用并确认无下载/安装任务，再继续。\n确认将这组 ${wraps.length} 项缓存全部${verb}？\n共 ${allPaths.length} 个路径${sizeStr}。`)) return;
+  postAction(secActions, allPaths, mode).then(res=>{
+    if(res.ok){
+      status.textContent = mode==='rm' ? `✓ 已删除 ${wraps.length} 项` : `✓ 已移 ${wraps.length} 项到废纸篓`;
+      status.className='del-status sec-status ok';
+      wraps.forEach(w=>{
+        const item=w.closest('.item'); item.classList.add('cleaned');
+        const badge=item.querySelector('.item-head .item-badge');
+        if(badge) badge.textContent = mode==='rm' ? '已删除' : '已移废纸篓';
+        const ist=w.querySelector('.del-status');
+        if(ist){ ist.textContent = mode==='rm'?'✓ 已删除':'✓ 已移到废纸篓'; ist.className='del-status ok'; }
+        w.querySelectorAll('.del-btn.trash,.del-btn.danger').forEach(b=>b.remove());
+      });
+      secActions.querySelectorAll('.del-btn').forEach(b=>b.remove());
+    } else { status.textContent='✗ '+(res.error||'失败'); status.className='del-status sec-status err'; }
+  });
+}
+
+// 一键删除按钮：仅当 server.py 提供了 DELETE 配置、且该项有具体 trash_paths 时渲染
+function delBlock(it){
+  if(!DELETE || !it.trash_paths || !it.trash_paths.length) return '';
+  const payload = btoa(unescape(encodeURIComponent(JSON.stringify(it.trash_paths))));
+  return `<div class="field del-actions" data-paths="${payload}">
+    <div class="label">在网页上直接处理（${it.trash_paths.length} 个路径）</div>
+    <div class="del-row">
+      <button class="del-btn trash" onclick="doDelete(this,'trash')">移到废纸篓</button>
+      <button class="del-btn danger" onclick="doDelete(this,'rm')">直接删除</button>
+      <span class="del-status"></span>
+    </div>
+    <div class="del-note"><b>移到废纸篓</b>：可逆，删错能从${FM}废纸篓捞回，但要清空废纸篓才真正释放空间。<b>直接删除</b>：立即释放、不可恢复。绿灯都是可再生缓存，删了会自动重建。</div>
+  </div>`;
+}
+
+function postAction(wrap, paths, mode){
+  const status = wrap.querySelector('.del-status');
+  const btns = wrap.querySelectorAll('.del-btn');
+  status.textContent = '处理中…'; status.className='del-status';
+  btns.forEach(b=>b.disabled=true);
+  return fetch(DELETE.endpoint, {method:'POST', headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({token:DELETE.token, paths, mode})})
+    .then(r=>r.json()).then(res=>{ btns.forEach(b=>b.disabled=false); return res; })
+    .catch(e=>{ btns.forEach(b=>b.disabled=false); return {ok:false, error:'连接失败：'+e}; });
+}
+
+function doDelete(btn, mode){
+  const wrap = btn.closest('.del-actions');
+  const paths = JSON.parse(decodeURIComponent(escape(atob(wrap.dataset.paths))));
+  const verb = mode==='rm' ? '直接删除（不可恢复）' : '移到废纸篓（访达可恢复）';
+  if(!confirm(`请先满足卡片列出的退出应用等清理前提。\n确认${verb}以下 ${paths.length} 个路径？\n\n`+paths.join('\n'))) return;
+  postAction(wrap, paths, mode).then(res=>{
+    const status = wrap.querySelector('.del-status');
+    if(res.ok){
+      status.textContent = mode==='rm' ? '✓ 已删除，空间已释放' : '✓ 已移到废纸篓（访达可恢复，清空后释放空间）';
+      status.className='del-status ok';
+      wrap.querySelectorAll('.del-btn.trash,.del-btn.danger').forEach(b=>b.remove());
+      // 折叠状态下也能看到：标题行打上徽标 + 整行变灰
+      const item = wrap.closest('.item');
+      if(item){
+        item.classList.add('cleaned');
+        const badge = item.querySelector('.item-head .item-badge');
+        if(badge) badge.textContent = mode==='rm' ? '已删除' : '已移废纸篓';
+      }
+    } else { status.textContent='✗ '+(res.error||'失败'); status.className='del-status err'; }
+  });
+}
+
+function doOpen(btn){
+  const wrap = btn.closest('.del-actions');
+  const paths = JSON.parse(decodeURIComponent(escape(atob(wrap.dataset.open))));
+  postAction(wrap, paths, 'open').then(res=>{
+    const status = wrap.querySelector('.del-status');
+    if(res.ok){ status.textContent='✓ 已在'+FM+'打开，自行审查删除'; status.className='del-status ok'; }
+    else { status.textContent='✗ '+(res.error||'失败'); status.className='del-status err'; }
+  });
+}
+
+const b64 = o => btoa(unescape(encodeURIComponent(JSON.stringify(o))));
+
+function renderYellow(items){
+  if(!items||!items.length) return '';
+  const ordered=[...items.filter(it=>it.decision_summary?.attention),...items.filter(it=>!it.decision_summary?.attention)];
+  const focusCount=ordered.filter(it=>it.decision_summary?.attention).length;
+  const cards = ordered.map(it=>card('yellow', it.name, it.size, it.path,
+    renderEvidence(it) + `<details class="audit"><summary>处置说明与补充建议</summary><div class="field"><div class="label">内容画像</div>${esc(it.content_profile)}</div>
+     <div class="field"><div class="label">为什么需要人工判断</div>${esc(it.why_manual)}</div>
+     <div class="field"><div class="label">处置路径</div>${esc(it.disposal)}</div>
+     <div class="risk">⚠️ ${esc(it.risk)}</div></details>` + yellowActions(it), it)).join('');
+  const boundary=(()=>{if(!focusCount)return 0;let at=0;for(let i=0;i<focusCount;i++){at=cards.indexOf('<div class="item yellow">',at);if(at<0)return cards.length;at++;}const n=cards.indexOf('<div class="item yellow">',at);return n<0?cards.length:n;})();
+  return (focusCount?section('优先关注', focusCount, cards.slice(0,boundary)):'')+ (items.length>focusCount?`<details class="quiet-group"><summary>其他已分析项目 · ${items.length-focusCount} 项</summary>${cards.slice(boundary)}</details>`:'');
+}
+
+// 橙灯操作：打开文件夹（去自己审查删）+ 仅当有核实过的安全子路径时给「移到废纸篓」（只可逆，不直接删）
+function yellowActions(it){
+  if(!DELETE) return '';
+  const hasTrash = it.trash_paths && it.trash_paths.length;
+  const trashBtn = hasTrash
+    ? `<button class="del-btn trash" onclick="doDelete(this,'trash')">移到废纸篓（仅安全部分）</button>` : '';
+  const trashNote = hasTrash
+    ? `<b>移到废纸篓（仅安全部分）</b>：只移这一项核实过可安全清理的子目录，可逆、需清空废纸篓才释放空间。` : '';
+  const openNote = it.open_note ? esc(it.open_note) : '';
+  return `<div class="field del-actions" data-paths="${hasTrash?b64(it.trash_paths):''}" data-open="${b64([it.path])}">
+    <div class="label">在网页上处理</div>
+    <div class="del-row">
+      <button class="del-btn open" onclick="doOpen(this)">在${FM}里打开</button>
+      ${trashBtn}
+      <span class="del-status"></span>
+    </div>
+    <div class="del-note"><b>在${FM}里打开</b>：只打开文件夹供你自己查看，不删任何东西。注意 App 托管的数据（B站/微信/Chrome 等）在${FM}里是程序内部格式、文件名看不懂，想清优先去对应 App 内删。${trashNote}${openNote?'<br>'+openNote:''}</div>
+  </div>`;
+}
+
+function renderRed(items){
+  if(!items||!items.length) return '';
+  const cards = items.map(it=>card('red', it.name, it.size||'', it.path,
+    renderEvidence(it) + `<details class="audit"><summary>保留与管理方式</summary><div class="field"><div class="label">为什么不建议手删</div>${esc(it.why_keep)}</div>
+     <div class="field"><div class="label">卸载 / 释放建议</div>${esc(it.indirect_release)}</div>
+     ${it.auto_reclaim?`<div class="field"><div class="label">是否自动回收</div>${esc(it.auto_reclaim)}</div>`:''}</details>` + redActions(it), it)).join('');
+  return `<details class="quiet-group"><summary>建议保留 / 已决定保留 · ${items.length} 项</summary>${cards}</details>`;
+}
+
+// 红灯操作：只给「在文件管理器里打开并选中该 App」，让用户自己正规卸载（不后台代删，App 需谨慎）
+function redActions(it){
+  if(!DELETE || !it.app_paths || !it.app_paths.length) return '';
+  return `<div class="field del-actions" data-open="${b64(it.app_paths)}">
+    <div class="label">在网页上处理</div>
+    <div class="del-row">
+      <button class="del-btn open" onclick="doOpen(this)">在${FM}里打开（去卸载）</button>
+      <span class="del-status"></span>
+    </div>
+    <div class="del-note"><b>在${FM}里打开</b>：定位到该应用，你可以右键「移到废纸篓」卸载，或用它自带的卸载器。应用本体放在系统目录、可能需要管理员密码，所以由你在${FM}里手动操作更稳妥，本页不代删。</div>
+  </div>`;
+}
+
+function decisionPreview(it,tier){
+  const d=it.decision_summary||{};
+  const blocked=it.cleanup_guard_note || DATA.report_validation?.status==='invalid';
+  const label=blocked?(it.user_decision==='keep'?'本轮保留':'暂不可操作'):(d.label||(tier==='green'?'建议清理':tier==='red'?'建议保留':'暂不整删'));
+  const saving=blocked?'本轮未核准':d.reclaim||(tier==='green'?it.size_estimate:'未核定');
+  const reasons=(title,arr)=>arr&&arr.length?`<div><b>${title}</b>${arr.slice(0,2).map(x=>`<p>${esc(x)}</p>`).join('')}</div>`:'';
+  return `<div class="decision-preview"><div class="decision-line"><span class="decision-label">${esc(label)}</span><span class="decision-saving">预计可清：${esc(saving)}</span></div><p>${esc(d.action||it.decision_reason||'保留现状，查看下方具体对象。')}</p><div class="decision-reasons">${reasons('支持清理',d.supports)}${reasons('保留理由 / 清理代价',d.cautions)}</div>${d.choice?`<div class="decision-choice">${esc(d.choice)}</div>`:''}${it.cleanup_guard_note?`<p class="risk">${esc(it.cleanup_guard_note)}</p>`:''}</div>`;
+}
+function card(tier,name,size,path,inner,it={}){
+  return `<div class="item ${tier}"><button class="item-head" aria-expanded="false" onclick="const p=this.parentNode; p.classList.toggle('open');this.setAttribute('aria-expanded',p.classList.contains('open'))"><span class="dot ${tier}"></span><span class="item-name">${esc(name)}</span><span class="item-badge"></span>${size?`<span class="item-size">占用 ${esc(cleanSize(size))}</span>`:''}<span class="chev">▶</span></button>${decisionPreview(it,tier)}<div class="item-body"><div class="item-path">${esc(path)}</div>${inner}</div></div>`;
+}
+function section(title,count,inner,actions){
+  return `<div class="sec"><h2>${esc(title)} <span class="count">${count} 项</span>${actions||''}</h2>${inner}</div>`;
+}
+
+const sumList=a=>(a&&a.length)?`<ul>${a.map(x=>`<li>${esc(x)}</li>`).join('')}</ul>`:'';
+
+// 执行建议：放在 Top5 之后、三级明细之前（先看处方，再看每项怎么做）
+// 开头用 overview 一句洞察作引子，下面是优先级清单
+function renderObjects(items){
+  if(!items?.length)return `<div class="focus-intro">尚未生成具体对象建议；以下目录清单仅供查阅，不代表可释放空间。</div>`;
+  const one=o=>`<article class="object-card ${o.category==='keep'?'object-keep':''}"><div class="object-title"><h3>${esc(o.name)}</h3><span class="object-size">${esc(o.size)}</span></div><div class="object-context">${esc(o.parent)} · ${esc(o.space_label||'对象实际分配占用，释放为条件估算')}</div><div class="object-verdict">${esc(o.recommendation)}</div><p class="object-impact">${esc(o.reason)}</p><p class="object-impact"><b>代价 / 前提：</b>${esc(o.tradeoff)}</p><div class="object-next"><b>${o.category==='keep'?'处理方式':'下一步'}：</b>${esc(o.next_step)}</div>${o.parts?.length?o.parts.map(v=>`<div class="object-context"><b>${esc(v.name)}</b> · ${esc(v.size)}</div>`).join(''):''}<div class="object-path">${esc(o.path)}</div><details class="audit"><summary>核验依据${o.member_paths?.length?'与完整文件清单':''}</summary><p class="note">${esc(o.evidence)}</p>${o.member_paths?.length?o.member_paths.map(p=>`<div class="object-path">${esc(p)}</div>`).join(''):''}</details></article>`;
+  const primary=items.filter(o=>!['keep','pending'].includes(o.category));const keep=items.filter(o=>o.category==='keep');const pending=items.filter(o=>o.category==='pending');
+  const sites=primary.filter(o=>o.kind==='site_cache');const others=primary.filter(o=>o.kind!=='site_cache');
+  const siteBlock=sites.length?`<article class="object-card"><h3>Chrome 中的 ${sites.length} 个大站点缓存</h3><p class="object-verdict">不需要离线使用的站点，建议优先清对应缓存</p><p class="object-impact">代价 / 前提：先确认同步完成；离线网页或资源可能不可用，之后需联网重新加载。</p><p class="object-next">你只需按站点决定是否还需要离线内容。确认清理时，在对应站点开发者工具 → Application → Cache Storage 中处理，保留其他存储。</p>${sites.map(o=>`<div style="padding:12px 0;border-top:1px solid var(--line);margin-top:10px"><div class="object-title"><b>${esc(o.name.replace(' 的网页离线存储',''))}</b><span class="object-size">${esc(o.size)}</span></div><div class="object-path">${esc(o.path)}</div></div>`).join('')}<details class="audit"><summary>站点归属与测量依据</summary><p class="note">${esc(sites[0].evidence)}</p></details></article>`:'';
+  return `<div class="sec"><h2>先决定这些具体对象 <span class="count">${primary.length} 项</span></h2><p class="object-intro">测量于 ${esc(DATA.object_observed_at||DATA.generated_at)}。按清理收益和判断难度排序；下面的大小属于具体对象，不是父目录总量。候选不合计为可立即释放量；完整依据可选看。</p>${siteBlock}${others.map(one).join('')}${pending.length?`<details class="quiet-group"><summary>有空间收益，技术前提尚待核实 · ${pending.length} 项</summary>${pending.map(one).join('')}</details>`:''}${keep.length?`<details class="quiet-group"><summary>这些大文件建议保留 · ${keep.length} 项</summary>${keep.map(one).join('')}</details>`:''}</div>`;
+}
+
+function renderPriority(sm){
+  if(!sm || (!sm.priority && !sm.overview)) return '';
+  const intro = sm.overview?`<p class="lead">${esc(sm.overview)}</p>`:'';
+  const body = sm.priority?(Array.isArray(sm.priority)?sumList(sm.priority):`<p>${esc(sm.priority)}</p>`):'';
+  return `<div class="focus-intro"><b>先看建议，再决定是否清理</b><p>每张卡片先给结论、可清空间和关键取舍；点击标题看路径与操作，完整依据另行展开。目录占用不等于可释放空间。</p><details class="audit"><summary>扫描概况与完整执行建议</summary>${intro}${body}</details></div>`;
+}
+
+// 长期优化建议：留在报告最后
+function renderLongTerm(sm){
+  if(!sm || !sm.long_term || !sm.long_term.length) return '';
+  return `<div class="sec"><h2>长期优化建议</h2><div class="summary">${sumList(sm.long_term)}</div></div>`;
+}
+
+function renderDenied(){
+  if(!DATA.denied||!DATA.denied.length) return '';
+  return `<details class="denied"><summary>扫描覆盖缺口（可能遗漏体量）</summary>${DATA.denied.map(esc).join('<br>')}</details>`;
+}
+
+// mount
+const app=document.getElementById('app');
+app.innerHTML = renderSystem(DATA.system, DATA.summary)
+  + renderValidation(DATA.report_validation)
+  + renderObjects(DATA.object_decisions)
+  + `<details class="quiet-group"><summary>全部目录与子项明细（背景资料）</summary>${renderTop5(DATA.top5)}${renderPriority(DATA.summary)}${renderYellow(DATA.yellow)}${renderRed(DATA.red)}</details>`
+  + `<details class="quiet-group"><summary>独立可再生缓存 · ${(DATA.green||[]).length} 项 · ${esc(DATA.summary?.tier_stats?.green||'')}</summary>${renderGreen(DATA.green)}</details>`
+  + renderDenied() + renderLongTerm(DATA.summary);
+
+// copy handlers (delegated)
+document.addEventListener('click', e=>{
+  const b=e.target.closest('.copy'); if(!b) return;
+  e.stopPropagation();
+  const text=decodeURIComponent(escape(atob(b.dataset.cmd)));
+  navigator.clipboard.writeText(text).then(()=>{
+    b.textContent='已复制'; b.classList.add('done');
+    setTimeout(()=>{b.textContent='复制';b.classList.remove('done');},1500);
+  });
+});
+</script>
+</body>
+</html>
